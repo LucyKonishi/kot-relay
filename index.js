@@ -23,5 +23,9 @@ app.all("/kot/*", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
+app.get("/ip", async (req, res) => {
+  const r = await fetch("https://api.ipify.org?format=json");
+  const data = await r.json();
+  res.json(data);
+});
 app.listen(process.env.PORT || 3000, () => console.log("KOT relay running"));
