@@ -6,14 +6,14 @@ const cron = require("node-cron");
 const app = express();
 app.use(express.json());
 
-const KOT_BASE       = "https://api.kingtime.jp/v1.0";
-const KOT_TOKEN      = process.env.KOT_TOKEN;
-const KOT_LOGIN_URL  = process.env.KOT_LOGIN_URL;
-const KOT_USERNAME   = process.env.KOT_USERNAME;
-const KOT_PASSWORD   = process.env.KOT_PASSWORD;
-const KOT_ADMIN_URL  = process.env.KOT_ADMIN_URL;
+const KOT_BASE      = "https://api.kingtime.jp/v1.0";
+const KOT_TOKEN     = process.env.KOT_TOKEN;
+const KOT_LOGIN_URL = process.env.KOT_LOGIN_URL;
+const KOT_USERNAME  = process.env.KOT_USERNAME;
+const KOT_PASSWORD  = process.env.KOT_PASSWORD;
+const KOT_ADMIN_URL = process.env.KOT_ADMIN_URL;
 
-// ─── KOT API Relay ───────────────────────────────────────────
+// ─── KOT API Relay ────────────────────────────────────────────
 app.all("/kot/*", async (req, res) => {
   const path = req.params[0];
   const kotUrl = `${KOT_BASE}/${path}`;
@@ -33,35 +33,33 @@ app.all("/kot/*", async (req, res) => {
   }
 });
 
-// ─── IP Check ────────────────────────────────────────────────
+// ─── IP Check ─────────────────────────────────────────────────
 app.get("/ip", async (req, res) => {
   const r = await fetch("https://api.ipify.org?format=json");
   const data = await r.json();
   res.json(data);
 });
 
-// ─── Paid Leave Scraper ──────────────────────────────────────
+// ─── Paid Leave Scraper ───────────────────────────────────────
 let paidLeaveCache = { data: null, headers: null, updatedAt: null, error: null };
 
 async function scrapePaidLeave() {
-  console.log("⏳ Starting paid leave scrape...");
+  console.log("Starting paid leave scrape...");
   let browser;
   try {
     browser = await puppeteer.launch({
-   browser = await puppeteer.launch({
-  args: chromium.args,
-  executablePath: await chromium.executablePath(),
-  headless: chromium.headless,
-});
+      args: chromium.args,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+    });
 
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
 
     // Step 1: Login
-    console.log("🔑 Logging in...");
+    console.log("Logging in...");
     await page.goto(KOT_LOGIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
 
-    // Try common username selectors
     const userSelectors = [
       'input[name="login_id"]',
       'input[name="loginId"]',
@@ -75,7 +73,7 @@ async function scrapePaidLeave() {
         await page.waitForSelector(sel, { timeout: 2000 });
         await page.type(sel, KOT_USERNAME);
         typed = true;
-        console.log("✅ Username typed using selector:", sel);
+        console.log("Username typed using:", sel);
         break;
       } catch(e) {}
     }
@@ -83,25 +81,24 @@ async function scrapePaidLeave() {
 
     await page.type('input[type="password"]', KOT_PASSWORD);
 
-    // Submit
     await Promise.all([
       page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
       page.click('input[type="submit"], button[type="submit"], button')
     ]);
-    console.log("✅ Logged in. URL:", page.url());
+    console.log("Logged in. URL:", page.url());
 
     // Step 2: Navigate to paid leave page
     const paidLeaveUrl = `${KOT_ADMIN_URL}?page_id=/setup/day_count_list`;
-    console.log("📋 Going to paid leave page:", paidLeaveUrl);
+    console.log("Going to paid leave page...");
     await page.goto(paidLeaveUrl, { waitUntil: "networkidle2", timeout: 30000 });
     await page.waitForSelector("table", { timeout: 15000 });
 
     // Step 3: Scrape headers
     const headers = await page.evaluate(() => {
-      const ths = document.querySelectorAll("table thead th, table thead td, table tr:first-child th, table tr:first-child td");
+      const ths = document.querySelectorAll("table thead th, table thead td, table tr:first-child th");
       return Array.from(ths).map(h => h.textContent.trim());
     });
-    console.log("📊 Headers found:", headers);
+    console.log("Headers:", headers);
 
     // Step 4: Scrape rows
     const rows = await page.evaluate(() => {
@@ -111,7 +108,7 @@ async function scrapePaidLeave() {
         return Array.from(tds).map(td => td.textContent.trim());
       }).filter(r => r.length > 0);
     });
-    console.log(`✅ Scraped ${rows.length} rows`);
+    console.log("Scraped rows:", rows.length);
 
     paidLeaveCache = {
       headers,
@@ -121,15 +118,15 @@ async function scrapePaidLeave() {
     };
 
   } catch(e) {
-    console.error("❌ Scrape failed:", e.message);
+    console.error("Scrape failed:", e.message);
     paidLeaveCache.error = e.message;
   } finally {
     if (browser) await browser.close();
-    console.log("🏁 Scrape finished");
+    console.log("Scrape finished");
   }
 }
 
-// Schedule: 7:00 AM JST = 22:00 UTC | 4:00 PM JST = 07:00 UTC
+// 7:00 AM JST = 22:00 UTC | 4:00 PM JST = 07:00 UTC
 cron.schedule("0 22 * * *", () => scrapePaidLeave());
 cron.schedule("0 7 * * *",  () => scrapePaidLeave());
 
@@ -137,7 +134,7 @@ app.get("/paid-leave-data", async (req, res) => {
   const ageMs = paidLeaveCache.updatedAt
     ? Date.now() - new Date(paidLeaveCache.updatedAt).getTime()
     : Infinity;
-  const isStale = ageMs > 13 * 60 * 60 * 1000; // older than 13 hours
+  const isStale = ageMs > 13 * 60 * 60 * 1000;
 
   if (isStale) {
     await scrapePaidLeave();
@@ -146,4 +143,4 @@ app.get("/paid-leave-data", async (req, res) => {
 });
 
 // ─── Start Server ─────────────────────────────────────────────
-app.listen(process.env.PORT || 3000, () => console.log("✅ KOT relay running"));
+app.listen(process.env.PORT || 3000, () => console.log("KOT relay running"));
