@@ -1,6 +1,5 @@
 const express = require("express");
-const puppeteer = require("puppeteer-core");
-const chromium = require("@sparticuz/chromium");
+const puppeteer = require("puppeteer");
 const cron = require("node-cron");
 
 const app = express();
@@ -48,9 +47,15 @@ async function scrapePaidLeave() {
   let browser;
   try {
     browser = await puppeteer.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
+      headless: "new",
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--single-process",
+        "--no-zygote"
+      ]
     });
 
     const page = await browser.newPage();
