@@ -38,7 +38,41 @@ app.get("/ip", async (req, res) => {
   const data = await r.json();
   res.json(data);
 });
+app.get("/debug-page", async (req, res) => {
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: "new",
+      args: ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu","--single-process","--no-zygote"]
+    });
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
 
+    await page.goto(KOT_LOGIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
+    const userSelectors = ['input[name="login_id"]','input[name="loginId"]','input[name="username"]','input[type="text"]'];
+    for (const sel of userSelectors) {
+      try { await page.waitForSelector(sel, { timeout: 2000 }); await page.type(sel, KOT_USERNAME); break; } catch(e) {}
+    }
+    await page.type('input[type="password"]', KOT_PASSWORD);
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
+      page.keyboard.press('Enter')
+    ]);
+
+    const paidLeaveUrl = `${KOT_ADMIN_URL}?page_id=/setup/day_count_list`;
+    await page.goto(paidLeaveUrl, { waitUntil: "networkidle2", timeout: 30000 });
+    await new Promise(r => setTimeout(r, 5000));
+
+    const url = page.url();
+    const html = await page.content();
+
+    res.json({ url, html: html.substring(0, 5000) });
+  } catch(e) {
+    res.json({ error: e.message });
+  } finally {
+    if (browser) await browser.close();
+  }
+});
 // ─── Paid Leave Scraper ───────────────────────────────────────
 let paidLeaveCache = { data: null, headers: null, updatedAt: null, error: null };
 
