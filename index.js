@@ -59,7 +59,9 @@ app.get("/debug-page", async (req, res) => {
       page.keyboard.press('Enter')
     ]);
 
-    const paidLeaveUrl = `${KOT_ADMIN_URL}?page_id=/setup/day_count_list`;
+    const adminUrl = page.url(); // use the bot's own session URL after login
+console.log("Bot admin URL:", adminUrl);
+const paidLeaveUrl = `${adminUrl}?page_id=/setup/day_count_list`;
     await page.goto(paidLeaveUrl, { waitUntil: "networkidle2", timeout: 30000 });
     await new Promise(r => setTimeout(r, 5000));
 
