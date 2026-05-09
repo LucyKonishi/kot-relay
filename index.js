@@ -86,10 +86,10 @@ async function scrapePaidLeave() {
 
     await page.type('input[type="password"]', KOT_PASSWORD);
 
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
-      page.click('input[type="submit"], button[type="submit"], button')
-    ]);
+await Promise.all([
+  page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
+  page.keyboard.press('Enter')
+]);
     console.log("Logged in. URL:", page.url());
 
     // Step 2: Navigate to paid leave page
