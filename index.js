@@ -86,17 +86,28 @@ async function scrapePaidLeave() {
 
     await page.type('input[type="password"]', KOT_PASSWORD);
 
-await Promise.all([
-  page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
-  page.keyboard.press('Enter')
-]);
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
+      page.keyboard.press('Enter')
+    ]);
     console.log("Logged in. URL:", page.url());
 
     // Step 2: Navigate to paid leave page
     const paidLeaveUrl = `${KOT_ADMIN_URL}?page_id=/setup/day_count_list`;
     console.log("Going to paid leave page...");
     await page.goto(paidLeaveUrl, { waitUntil: "networkidle2", timeout: 30000 });
-    await page.waitForSelector("table", { timeout: 15000 });
+
+    // Wait extra and debug
+    await new Promise(r => setTimeout(r, 5000));
+    console.log("PAGE_URL:", page.url());
+    console.log("PAGE_HTML:", (await page.content()).substring(0, 3000));
+
+    try {
+      await page.waitForSelector("table", { timeout: 30000 });
+    } catch(e) {
+      console.log("No table found");
+      throw e;
+    }
 
     // Step 3: Scrape headers
     const headers = await page.evaluate(() => {
