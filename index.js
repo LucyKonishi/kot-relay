@@ -38,6 +38,8 @@ app.get("/ip", async (req, res) => {
   const data = await r.json();
   res.json(data);
 });
+
+// ─── Debug Page ───────────────────────────────────────────────
 app.get("/debug-page", async (req, res) => {
   let browser;
   try {
@@ -48,6 +50,7 @@ app.get("/debug-page", async (req, res) => {
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
 
+    // Login
     await page.goto(KOT_LOGIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
     const userSelectors = ['input[name="login_id"]','input[name="loginId"]','input[name="username"]','input[type="text"]'];
     for (const sel of userSelectors) {
@@ -59,15 +62,17 @@ app.get("/debug-page", async (req, res) => {
       page.keyboard.press('Enter')
     ]);
 
-    const adminUrl = page.url(); // use the bot's own session URL after login
-console.log("Bot admin URL:", adminUrl);
-const paidLeaveUrl = `${adminUrl}?page_id=/setup/day_count_list`;
+    // Go to main admin page first
+    await page.goto(KOT_ADMIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
+    await new Promise(r => setTimeout(r, 3000));
+
+    // Go to paid leave page
+    const paidLeaveUrl = `${KOT_ADMIN_URL}?page_id=/setup/day_count_list`;
     await page.goto(paidLeaveUrl, { waitUntil: "networkidle2", timeout: 30000 });
     await new Promise(r => setTimeout(r, 5000));
 
     const url = page.url();
     const html = await page.content();
-
     res.json({ url, html: html.substring(0, 5000) });
   } catch(e) {
     res.json({ error: e.message });
@@ -75,6 +80,7 @@ const paidLeaveUrl = `${adminUrl}?page_id=/setup/day_count_list`;
     if (browser) await browser.close();
   }
 });
+
 // ─── Paid Leave Scraper ───────────────────────────────────────
 let paidLeaveCache = { data: null, headers: null, updatedAt: null, error: null };
 
@@ -121,38 +127,34 @@ async function scrapePaidLeave() {
     if (!typed) throw new Error("Could not find username field");
 
     await page.type('input[type="password"]', KOT_PASSWORD);
-
     await Promise.all([
       page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
       page.keyboard.press('Enter')
     ]);
     console.log("Logged in. URL:", page.url());
 
-    // Step 2: Navigate to paid leave page
+    // Step 2: Go to main admin page first
+    console.log("Loading main admin page...");
+    await page.goto(KOT_ADMIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
+    await new Promise(r => setTimeout(r, 3000));
+
+    // Step 3: Navigate to paid leave page
     const paidLeaveUrl = `${KOT_ADMIN_URL}?page_id=/setup/day_count_list`;
     console.log("Going to paid leave page...");
     await page.goto(paidLeaveUrl, { waitUntil: "networkidle2", timeout: 30000 });
-
-    // Wait extra and debug
     await new Promise(r => setTimeout(r, 5000));
-    console.log("PAGE_URL:", page.url());
-    console.log("PAGE_HTML:", (await page.content()).substring(0, 3000));
+    console.log("Page URL:", page.url());
 
-    try {
-      await page.waitForSelector("table", { timeout: 30000 });
-    } catch(e) {
-      console.log("No table found");
-      throw e;
-    }
+    await page.waitForSelector("table", { timeout: 30000 });
 
-    // Step 3: Scrape headers
+    // Step 4: Scrape headers
     const headers = await page.evaluate(() => {
       const ths = document.querySelectorAll("table thead th, table thead td, table tr:first-child th");
       return Array.from(ths).map(h => h.textContent.trim());
     });
     console.log("Headers:", headers);
 
-    // Step 4: Scrape rows
+    // Step 5: Scrape rows
     const rows = await page.evaluate(() => {
       const trs = document.querySelectorAll("table tbody tr");
       return Array.from(trs).map(tr => {
