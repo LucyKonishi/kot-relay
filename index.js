@@ -52,7 +52,7 @@ app.get("/debug-page", async (req, res) => {
 
     // Login
     await page.goto(KOT_LOGIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
-    const userSelectors = ['input[name="login_id"]','input[name="loginId"]','input[name="username"]','input[type="text"]'];
+    const userSelectors = ['input[name="login_id"]','input[name="loginId"]','input[type="text"]'];
     for (const sel of userSelectors) {
       try { await page.waitForSelector(sel, { timeout: 2000 }); await page.type(sel, KOT_USERNAME); break; } catch(e) {}
     }
@@ -62,18 +62,19 @@ app.get("/debug-page", async (req, res) => {
       page.keyboard.press('Enter')
     ]);
 
-    // Go to main admin page first
+    // Load main admin page
     await page.goto(KOT_ADMIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
-    await new Promise(r => setTimeout(r, 3000));
-
-    // Go to paid leave page
-    const paidLeaveUrl = `${KOT_ADMIN_URL}?page_id=/setup/day_count_list`;
-    await page.goto(paidLeaveUrl, { waitUntil: "networkidle2", timeout: 30000 });
     await new Promise(r => setTimeout(r, 5000));
 
-    const url = page.url();
+    // Get all links from the page
+    const links = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('a'))
+        .map(a => ({ text: a.textContent.trim(), href: a.href, onclick: a.getAttribute('onclick') }))
+        .filter(a => a.text.length > 0);
+    });
+
     const html = await page.content();
-    res.json({ url, html: html.substring(0, 5000) });
+    res.json({ url: page.url(), links, html: html.substring(0, 3000) });
   } catch(e) {
     res.json({ error: e.message });
   } finally {
