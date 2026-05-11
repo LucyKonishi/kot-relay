@@ -96,24 +96,17 @@ app.get("/debug-page", async (req, res) => {
     await page.setViewport({ width: 1280, height: 800 });
     await loginToKOT(page);
 
-    // Click Leave management link
-    const leaveLink = await page.$('a[href*="day_count_list"]');
-    if (!leaveLink) throw new Error("Could not find Leave management link");
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
-      leaveLink.click()
-    ]);
-    await new Promise(r => setTimeout(r, 5000));
+   // Get the full URL from the link (includes session token)
+const leaveUrl = await page.$eval(
+  'a[href*="day_count_list"]',
+  a => a.href
+);
+if (!leaveUrl) throw new Error("Could not find Leave management link");
+console.log("Leave URL:", leaveUrl);
 
-    const url = page.url();
-    const html = await page.content();
-    res.json({ url, html: html.substring(0, 8000) });
-  } catch(e) {
-    res.json({ error: e.message });
-  } finally {
-    if (browser) await browser.close();
-  }
-});
+// Navigate directly to the full URL
+await page.goto(leaveUrl, { waitUntil: "networkidle2", timeout: 30000 });
+await new Promise(r => setTimeout(r, 5000));
 
 // ─── Paid Leave Scraper ───────────────────────────────────────
 let paidLeaveCache = {
@@ -136,13 +129,17 @@ async function scrapePaidLeave() {
 
     // ── Scrape Leave Management (day_count_list) ──
     console.log("Navigating to Leave management...");
-    const leaveLink = await page.$('a[href*="day_count_list"]');
-    if (!leaveLink) throw new Error("Could not find Leave management link");
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
-      leaveLink.click()
-    ]);
-    await new Promise(r => setTimeout(r, 5000));
+   // Get the full URL from the link (includes session token)
+const leaveUrl = await page.$eval(
+  'a[href*="day_count_list"]',
+  a => a.href
+);
+if (!leaveUrl) throw new Error("Could not find Leave management link");
+console.log("Leave URL:", leaveUrl);
+
+// Navigate directly to the full URL
+await page.goto(leaveUrl, { waitUntil: "networkidle2", timeout: 30000 });
+await new Promise(r => setTimeout(r, 5000));
     console.log("Leave page URL:", page.url());
 
     await page.waitForSelector("table", { timeout: 30000 });
@@ -168,16 +165,12 @@ async function scrapePaidLeave() {
 
     // ── Scrape Entitlement (assign_paid_holiday_list) ──
     console.log("Navigating to Entitled for Paid leave...");
-    const entitleLink = await page.$('a[href*="assign_paid_holiday_list"]');
-    let entitleHeaders = [];
-    let entitleRows = [];
-
-    if (entitleLink) {
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
-        entitleLink.click()
-      ]);
-      await new Promise(r => setTimeout(r, 5000));
+   const entitleUrl = await page.$eval(
+  'a[href*="assign_paid_holiday_list"]',
+  a => a.href
+);
+await page.goto(entitleUrl, { waitUntil: "networkidle2", timeout: 30000 });
+await new Promise(r => setTimeout(r, 5000));
       console.log("Entitlement page URL:", page.url());
 
       try {
