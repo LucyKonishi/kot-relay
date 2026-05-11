@@ -39,42 +39,75 @@ app.get("/ip", async (req, res) => {
   res.json(data);
 });
 
+// ─── Browser Launch Helper ────────────────────────────────────
+async function launchBrowser() {
+  return puppeteer.launch({
+    headless: "new",
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--single-process",
+      "--no-zygote"
+    ]
+  });
+}
+
+// ─── Login Helper ─────────────────────────────────────────────
+async function loginToKOT(page) {
+  await page.goto(KOT_LOGIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
+  const userSelectors = [
+    'input[name="login_id"]',
+    'input[name="loginId"]',
+    'input[name="username"]',
+    'input[type="text"]'
+  ];
+  let typed = false;
+  for (const sel of userSelectors) {
+    try {
+      await page.waitForSelector(sel, { timeout: 2000 });
+      await page.type(sel, KOT_USERNAME);
+      typed = true;
+      console.log("Username typed using:", sel);
+      break;
+    } catch(e) {}
+  }
+  if (!typed) throw new Error("Could not find username field");
+  await page.type('input[type="password"]', KOT_PASSWORD);
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
+    page.keyboard.press('Enter')
+  ]);
+  console.log("Logged in. URL:", page.url());
+
+  // Load main admin page to establish session
+  await page.goto(KOT_ADMIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
+  await new Promise(r => setTimeout(r, 3000));
+  console.log("Admin page loaded");
+}
+
 // ─── Debug Page ───────────────────────────────────────────────
 app.get("/debug-page", async (req, res) => {
   let browser;
   try {
-    browser = await puppeteer.launch({
-      headless: "new",
-      args: ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu","--single-process","--no-zygote"]
-    });
+    browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
+    await loginToKOT(page);
 
-    // Login
-    await page.goto(KOT_LOGIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
-    const userSelectors = ['input[name="login_id"]','input[name="loginId"]','input[type="text"]'];
-    for (const sel of userSelectors) {
-      try { await page.waitForSelector(sel, { timeout: 2000 }); await page.type(sel, KOT_USERNAME); break; } catch(e) {}
-    }
-    await page.type('input[type="password"]', KOT_PASSWORD);
+    // Click Leave management link
+    const leaveLink = await page.$('a[href*="day_count_list"]');
+    if (!leaveLink) throw new Error("Could not find Leave management link");
     await Promise.all([
       page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
-      page.keyboard.press('Enter')
+      leaveLink.click()
     ]);
-
-    // Load main admin page
-    await page.goto(KOT_ADMIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
     await new Promise(r => setTimeout(r, 5000));
 
-    // Get all links from the page
-    const links = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('a'))
-        .map(a => ({ text: a.textContent.trim(), href: a.href, onclick: a.getAttribute('onclick') }))
-        .filter(a => a.text.length > 0);
-    });
-
+    const url = page.url();
     const html = await page.content();
-    res.json({ url: page.url(), links, html: html.substring(0, 3000) });
+    res.json({ url, html: html.substring(0, 8000) });
   } catch(e) {
     res.json({ error: e.message });
   } finally {
@@ -83,94 +116,99 @@ app.get("/debug-page", async (req, res) => {
 });
 
 // ─── Paid Leave Scraper ───────────────────────────────────────
-let paidLeaveCache = { data: null, headers: null, updatedAt: null, error: null };
+let paidLeaveCache = {
+  leaveData: null,
+  entitlementData: null,
+  updatedAt: null,
+  error: null
+};
 
 async function scrapePaidLeave() {
   console.log("Starting paid leave scrape...");
   let browser;
   try {
-    browser = await puppeteer.launch({
-      headless: "new",
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--single-process",
-        "--no-zygote"
-      ]
-    });
-
+    browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
 
-    // Step 1: Login
-    console.log("Logging in...");
-    await page.goto(KOT_LOGIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
+    // Login
+    await loginToKOT(page);
 
-    const userSelectors = [
-      'input[name="login_id"]',
-      'input[name="loginId"]',
-      'input[name="username"]',
-      'input[name="email"]',
-      'input[type="text"]'
-    ];
-    let typed = false;
-    for (const sel of userSelectors) {
-      try {
-        await page.waitForSelector(sel, { timeout: 2000 });
-        await page.type(sel, KOT_USERNAME);
-        typed = true;
-        console.log("Username typed using:", sel);
-        break;
-      } catch(e) {}
-    }
-    if (!typed) throw new Error("Could not find username field");
-
-    await page.type('input[type="password"]', KOT_PASSWORD);
+    // ── Scrape Leave Management (day_count_list) ──
+    console.log("Navigating to Leave management...");
+    const leaveLink = await page.$('a[href*="day_count_list"]');
+    if (!leaveLink) throw new Error("Could not find Leave management link");
     await Promise.all([
       page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
-      page.keyboard.press('Enter')
+      leaveLink.click()
     ]);
-    console.log("Logged in. URL:", page.url());
-
-    // Step 2: Go to main admin page first
-    console.log("Loading main admin page...");
-    await page.goto(KOT_ADMIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
-    await new Promise(r => setTimeout(r, 3000));
-
-    // Step 3: Navigate to paid leave page
-    const paidLeaveUrl = `${KOT_ADMIN_URL}?page_id=/setup/day_count_list`;
-    console.log("Going to paid leave page...");
-    await page.goto(paidLeaveUrl, { waitUntil: "networkidle2", timeout: 30000 });
     await new Promise(r => setTimeout(r, 5000));
-    console.log("Page URL:", page.url());
+    console.log("Leave page URL:", page.url());
 
     await page.waitForSelector("table", { timeout: 30000 });
 
-    // Step 4: Scrape headers
-    const headers = await page.evaluate(() => {
+    const leaveHeaders = await page.evaluate(() => {
       const ths = document.querySelectorAll("table thead th, table thead td, table tr:first-child th");
       return Array.from(ths).map(h => h.textContent.trim());
     });
-    console.log("Headers:", headers);
+    console.log("Leave headers:", leaveHeaders);
 
-    // Step 5: Scrape rows
-    const rows = await page.evaluate(() => {
+    const leaveRows = await page.evaluate(() => {
       const trs = document.querySelectorAll("table tbody tr");
       return Array.from(trs).map(tr => {
         const tds = tr.querySelectorAll("td");
         return Array.from(tds).map(td => td.textContent.trim());
       }).filter(r => r.length > 0);
     });
-    console.log("Scraped rows:", rows.length);
+    console.log("Leave rows scraped:", leaveRows.length);
+
+    // ── Go back to admin page ──
+    await page.goto(KOT_ADMIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
+    await new Promise(r => setTimeout(r, 3000));
+
+    // ── Scrape Entitlement (assign_paid_holiday_list) ──
+    console.log("Navigating to Entitled for Paid leave...");
+    const entitleLink = await page.$('a[href*="assign_paid_holiday_list"]');
+    let entitleHeaders = [];
+    let entitleRows = [];
+
+    if (entitleLink) {
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
+        entitleLink.click()
+      ]);
+      await new Promise(r => setTimeout(r, 5000));
+      console.log("Entitlement page URL:", page.url());
+
+      try {
+        await page.waitForSelector("table", { timeout: 30000 });
+        entitleHeaders = await page.evaluate(() => {
+          const ths = document.querySelectorAll("table thead th, table thead td, table tr:first-child th");
+          return Array.from(ths).map(h => h.textContent.trim());
+        });
+        entitleRows = await page.evaluate(() => {
+          const trs = document.querySelectorAll("table tbody tr");
+          return Array.from(trs).map(tr => {
+            const tds = tr.querySelectorAll("td");
+            return Array.from(tds).map(td => td.textContent.trim());
+          }).filter(r => r.length > 0);
+        });
+        console.log("Entitlement rows scraped:", entitleRows.length);
+      } catch(e) {
+        console.log("No table on entitlement page:", e.message);
+      }
+    } else {
+      console.log("Entitlement link not found");
+    }
 
     paidLeaveCache = {
-      headers,
-      data: rows,
+      leaveData: { headers: leaveHeaders, rows: leaveRows },
+      entitlementData: { headers: entitleHeaders, rows: entitleRows },
       updatedAt: new Date().toISOString(),
       error: null
     };
+
+    console.log("Scrape complete!");
 
   } catch(e) {
     console.error("Scrape failed:", e.message);
