@@ -138,28 +138,50 @@ function findCol(obj, candidates) {
 
 // ─── Helper: scrape table headers (handles multi-row headers) ─
 function buildHeaderSelector() {
-    // KOT tables often have multi-row <thead>. We grab all th/td in
-  // thead plus the first tr, then de-duplicate by position using
-  // the LAST header row which contains the actual leaf column names.
   return `
-      (() => {
-            const table = document.querySelector("table");
-                  if (!table) return [];
-                        const thead = table.querySelector("thead");
-                              if (thead) {
-                                      // Use the last row in thead as the definitive header row
-                                              const headerRows = Array.from(thead.querySelectorAll("tr"));
-                                                      const lastRow = headerRows[headerRows.length - 1];
-                                                              return Array.from(lastRow.querySelectorAll("th, td")).map(h => h.textContent.trim());
-                                                                    }
-                                                                          // Fallback: first <tr> in the table
-                                                                                const firstRow = table.querySelector("tr");
-                                                                                      if (firstRow) {
-                                                                                              return Array.from(firstRow.querySelectorAll("th, td")).map(h => h.textContent.trim());
-                                                                                                    }
-                                                                                                          return [];
-                                                                                                              })()
-                                                                                                                `;
+    (() => {
+      const tables = Array.from(document.querySelectorAll("table"));
+
+      const targetKeywords = [
+        "社員コード",
+        "従業員コード",
+        "スタッフコード",
+        "氏名",
+        "名前",
+        "残日数",
+        "取得日数",
+        "使用日数",
+        "付与日数"
+      ];
+
+      for (const table of tables) {
+        const text = table.textContent || "";
+
+        const isTarget = targetKeywords.some(k => text.includes(k));
+
+        if (!isTarget) continue;
+
+        const thead = table.querySelector("thead");
+
+        if (thead) {
+          const headerRows = Array.from(thead.querySelectorAll("tr"));
+          const lastRow = headerRows[headerRows.length - 1];
+
+          return Array.from(lastRow.querySelectorAll("th, td"))
+            .map(h => h.textContent.trim());
+        }
+
+        const firstRow = table.querySelector("tr");
+
+        if (firstRow) {
+          return Array.from(firstRow.querySelectorAll("th, td"))
+            .map(h => h.textContent.trim());
+        }
+      }
+
+      return [];
+    })()
+  `;
 }
 
 // ─── Paid Leave Scraper ───────────────────────────────────────
@@ -202,12 +224,36 @@ async function scrapePaidLeave() {
           console.log("Leave headers:", leaveHeaders);
 
       const leaveRows = await page.evaluate(() => {
-              const trs = document.querySelectorAll("table tbody tr");
-              return Array.from(trs).map(tr => {
-                        const tds = tr.querySelectorAll("td");
-                        return Array.from(tds).map(td => td.textContent.trim());
-              }).filter(r => r.length > 0);
-      });
+const leaveRows = await page.evaluate(() => {
+  const tables = Array.from(document.querySelectorAll("table"));
+
+  const targetKeywords = [
+    "社員コード",
+    "従業員コード",
+    "スタッフコード",
+    "氏名",
+    "名前",
+    "残日数",
+    "取得日数",
+    "使用日数",
+    "付与日数"
+  ];
+
+  const targetTable = tables.find(table => {
+    const text = table.textContent || "";
+    return targetKeywords.some(k => text.includes(k));
+  });
+
+  if (!targetTable) return [];
+
+  const trs = targetTable.querySelectorAll("tbody tr");
+
+  return Array.from(trs).map(tr => {
+    const tds = tr.querySelectorAll("td");
+    return Array.from(tds).map(td => td.textContent.trim());
+  }).filter(r => r.length > 0);
+});
+    
           console.log("Leave rows scraped:", leaveRows.length);
 
       // Map to named objects and extract key fields
@@ -245,12 +291,35 @@ async function scrapePaidLeave() {
                       await page.waitForSelector("table", { timeout: 30000 });
                       entitleHeaders = await page.evaluate(buildHeaderSelector());
                       entitleRows = await page.evaluate(() => {
-                                  const trs = document.querySelectorAll("table tbody tr");
-                                  return Array.from(trs).map(tr => {
-                                                const tds = tr.querySelectorAll("td");
-                                                return Array.from(tds).map(td => td.textContent.trim());
-                                  }).filter(r => r.length > 0);
-                      });
+                                  const leaveRows = await page.evaluate(() => {
+  const tables = Array.from(document.querySelectorAll("table"));
+
+  const targetKeywords = [
+    "社員コード",
+    "従業員コード",
+    "スタッフコード",
+    "氏名",
+    "名前",
+    "残日数",
+    "取得日数",
+    "使用日数",
+    "付与日数"
+  ];
+
+  const targetTable = tables.find(table => {
+    const text = table.textContent || "";
+    return targetKeywords.some(k => text.includes(k));
+  });
+
+  if (!targetTable) return [];
+
+  const trs = targetTable.querySelectorAll("tbody tr");
+
+  return Array.from(trs).map(tr => {
+    const tds = tr.querySelectorAll("td");
+    return Array.from(tds).map(td => td.textContent.trim());
+  }).filter(r => r.length > 0);
+});
                       console.log("Entitlement rows scraped:", entitleRows.length);
 
                 // Map to named objects and extract key fields
