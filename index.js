@@ -36,6 +36,7 @@ app.get("/ip", async (req, res) => {
 // IMPORTANT: This route must be BEFORE app.all("/kot/*", ...)
 app.get("/kot/employees", async (req, res) => {
   try {
+    // 1. Always fetch normal KOT employee data first
     const response = await fetch(`${KOT_BASE}/employees`, {
       method: "GET",
       headers: {
@@ -50,10 +51,32 @@ app.get("/kot/employees", async (req, res) => {
       return res.status(response.status).json(employees);
     }
 
-    await ensurePaidLeaveCache();
+    // 2. Do NOT block employees if paid-leave scraping fails
+    let paidLeaveMap = {};
 
-    const paidLeaveMap = buildPaidLeaveMapFromCache();
+    try {
+      const ageMs = paidLeaveCache.updatedAt
+        ? Date.now() - new Date(paidLeaveCache.updatedAt).getTime()
+        : Infinity;
 
+      const isStale = ageMs > PAID_LEAVE_MAX_AGE_MS;
+
+      // If there is no cache, start scraping in background only.
+      // Do not await it here.
+      if (isStale || !paidLeaveCache.leaveData) {
+        scrapePaidLeave().catch(err => {
+          console.error("Background paid leave scrape failed:", err.message);
+        });
+      }
+
+      paidLeaveMap = buildPaidLeaveMapFromCache();
+
+    } catch (leaveErr) {
+      console.error("Paid leave merge skipped:", leaveErr.message);
+      paidLeaveMap = {};
+    }
+
+    // 3. Return employees even if paid leave is not available
     const enrichedEmployees = employees.map(emp => {
       const code = normalizeEmployeeCode(emp.code);
       const leave = paidLeaveMap[code] || {};
@@ -77,14 +100,13 @@ app.get("/kot/employees", async (req, res) => {
     res.json(enrichedEmployees);
 
   } catch (err) {
-    console.error("Failed enriched /kot/employees:", err.message);
+    console.error("Failed /kot/employees:", err.message);
 
     res.status(500).json({
       error: err.message
     });
   }
 });
-
 // ─── Generic KOT API Relay ────────────────────────────────────
 // This must come AFTER the custom /kot/employees route.
 app.all("/kot/*", async (req, res) => {
