@@ -5,6 +5,7 @@ const cron = require("node-cron");
 const app = express();
 app.use(express.json());
 
+
 const KOT_BASE = "https://api.kingtime.jp/v1.0";
 const KOT_TOKEN = process.env.KOT_TOKEN;
 const KOT_LOGIN_URL = process.env.KOT_LOGIN_URL;
