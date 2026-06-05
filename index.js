@@ -1,1048 +1,244 @@
-const express = require("express");
-const puppeteer = require("puppeteer");
-const cron = require("node-cron");
+const express = require("express");const puppeteer = require("puppeteer");const cron = require("node-cron");
 
-const app = express();
-app.use(express.json());
+const app = express();app.use(express.json());
 
-const KOT_BASE = "https://api.kingtime.jp/v1.0";
-const KOT_TOKEN = process.env.KOT_TOKEN;
-const KOT_LOGIN_URL = process.env.KOT_LOGIN_URL;
-const KOT_USERNAME = process.env.KOT_USERNAME;
-const KOT_PASSWORD = process.env.KOT_PASSWORD;
-const KOT_ADMIN_URL = process.env.KOT_ADMIN_URL;
+const KOT_BASE = "https://api.kingtime.jp/v1.0";const KOT_TOKEN = process.env.KOT_TOKEN;const KOT_LOGIN_URL = process.env.KOT_LOGIN_URL;const KOT_USERNAME = process.env.KOT_USERNAME;const KOT_PASSWORD = process.env.KOT_PASSWORD;const KOT_ADMIN_URL = process.env.KOT_ADMIN_URL;
 
-const PAID_LEAVE_MAX_AGE_MS = 13 * 60 * 60 * 1000;
+// ─── KOT API Relay ────────────────────────────────────────────app.get("/kot/employees", async (req, res) => {try {// 1. Get normal KOT employee dataconst response = await fetch(${KOT_BASE}/employees, {method: "GET",headers: {"Authorization": Bearer ${KOT_TOKEN},"Content-Type": "application/json"}});
 
-let paidLeaveCache = {
-  leaveData: null,
-  entitlementData: null,
-  updatedAt: null,
-  error: null
-};
+const employees = await response.json();
 
-// ─── IP Check ─────────────────────────────────────────────────
-app.get("/ip", async (req, res) => {
-  try {
-    const r = await fetch("https://api.ipify.org?format=json");
-    const data = await r.json();
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── Enriched KOT Employees Endpoint ──────────────────────────
-// IMPORTANT: This route must be BEFORE app.all("/kot/*", ...)
-app.get("/kot/employees", async (req, res) => {
-  try {
-    const response = await fetch(`${KOT_BASE}/employees`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${KOT_TOKEN}`,
-        "Content-Type": "application/json"
-      }
-    });
-
-    const employees = await response.json();
-
-    if (!Array.isArray(employees)) {
-      return res.status(response.status).json(employees);
-    }
-
-    await ensurePaidLeaveCache();
-
-    const paidLeaveMap = buildPaidLeaveMapFromCache();
-
-    const enrichedEmployees = employees.map(emp => {
-      const code = normalizeEmployeeCode(emp.code);
-      const leave = paidLeaveMap[code] || {};
-
-      return {
-        ...emp,
-
-        remainingPaidLeave: leave.remainingPaidLeave ?? null,
-        paidLeaveRemaining: leave.remainingPaidLeave ?? null,
-        annualPaidLeaveRemaining: leave.remainingPaidLeave ?? null,
-
-        paidLeaveGranted: leave.grantedDays ?? null,
-        paidLeaveUsed: leave.usedDays ?? null,
-        paidLeaveGrantDate: leave.grantDate || null,
-        paidLeaveExpiryDate: leave.expiryDate || null,
-
-        paidLeaveSource: leave.hasRecord ? "KOT_PAID_LEAVE_CACHE" : null
-      };
-    });
-
-    res.json(enrichedEmployees);
-
-  } catch (err) {
-    console.error("Failed enriched /kot/employees:", err.message);
-
-    res.status(500).json({
-      error: err.message
-    });
-  }
-});
-
-// ─── Generic KOT API Relay ────────────────────────────────────
-// This must come AFTER the custom /kot/employees route.
-app.all("/kot/*", async (req, res) => {
-  const path = req.params[0];
-  const kotUrl = `${KOT_BASE}/${path}`;
-
-  try {
-    const response = await fetch(kotUrl, {
-      method: req.method,
-      headers: {
-        Authorization: `Bearer ${KOT_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: ["GET", "HEAD"].includes(req.method)
-        ? undefined
-        : JSON.stringify(req.body)
-    });
-
-    const text = await response.text();
-
-    try {
-      const data = JSON.parse(text);
-      res.status(response.status).json(data);
-    } catch (e) {
-      res.status(response.status).send(text);
-    }
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── Browser Launch Helper ────────────────────────────────────
-async function launchBrowser() {
-  return puppeteer.launch({
-    headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--single-process",
-      "--no-zygote"
-    ]
-  });
+if (!Array.isArray(employees)) {
+  return res.status(response.status).json(employees);
 }
 
-// ─── Login Helper ─────────────────────────────────────────────
-async function loginToKOT(page) {
-  if (!KOT_LOGIN_URL || !KOT_USERNAME || !KOT_PASSWORD || !KOT_ADMIN_URL) {
-    throw new Error("Missing KOT login environment variables");
-  }
+app.all("/kot/*", async (req, res) => {const path = req.params[0];const kotUrl = ${KOT_BASE}/${path};try {const response = await fetch(kotUrl, {method: req.method,headers: {"Authorization": Bearer ${KOT_TOKEN},"Content-Type": "application/json",},body: ["GET", "HEAD"].includes(req.method) ? undefined : JSON.stringify(req.body),});const data = await response.json();res.status(response.status).json(data);} catch (err) {res.status(500).json({ error: err.message });}});
 
-  await page.goto(KOT_LOGIN_URL, {
-    waitUntil: "domcontentloaded",
-    timeout: 30000
-  });
+// ─── IP Check ─────────────────────────────────────────────────app.get("/ip", async (req, res) => {const r = await fetch("https://api.ipify.org?format=json");const data = await r.json();res.json(data);});
 
-  await wait(3000);
+// ─── Browser Launch Helper ────────────────────────────────────async function launchBrowser() {return puppeteer.launch({headless: "new",args: ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu","--single-process","--no-zygote"]});}
 
-  console.log("Login page URL:", page.url());
+// ─── Login Helper ─────────────────────────────────────────────async function loginToKOT(page) {await page.goto(KOT_LOGIN_URL, { waitUntil: "networkidle2", timeout: 30000 });const userSelectors = ['input[name="login_id"]','input[name="loginId"]','input[name="username"]','input[type="text"]'];let typed = false;for (const sel of userSelectors) {try {await page.waitForSelector(sel, { timeout: 2000 });await page.type(sel, KOT_USERNAME);typed = true;console.log("Username typed using:", sel);break;} catch(e) {}}if (!typed) throw new Error("Could not find username field");await page.type('input[type="password"]', KOT_PASSWORD);await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),page.keyboard.press('Enter')]);console.log("Logged in. URL:", page.url());
 
-  const loginDebug = await page.evaluate(() => {
-    return {
-      title: document.title,
-      url: location.href,
-      inputs: Array.from(document.querySelectorAll("input")).map(input => ({
-        type: input.type,
-        name: input.name,
-        id: input.id,
-        placeholder: input.placeholder,
-        autocomplete: input.autocomplete
-      }))
-    };
-  });
+// Load main admin page to establish sessionawait page.goto(KOT_ADMIN_URL, { waitUntil: "networkidle2", timeout: 30000 });await new Promise(r => setTimeout(r, 3000));console.log("Admin page loaded");}
 
-  console.log("Login page inputs:", JSON.stringify(loginDebug, null, 2));
+// ─── Debug Page ───────────────────────────────────────────────app.get("/debug-page", async (req, res) => {let browser;try {browser = await launchBrowser();const page = await browser.newPage();await page.setViewport({ width: 1280, height: 800 });await loginToKOT(page);
 
-  const usernameTyped = await page.evaluate((username) => {
-    const inputs = Array.from(document.querySelectorAll("input"));
+  // Get the full URL from the link (includes session token)
+  const leaveUrl = await page.$eval(
+          'a[href*="day_count_list"]',
+          a => a.href
+        );
+      if (!leaveUrl) throw new Error("Could not find Leave management link");
+      console.log("Leave URL:", leaveUrl);
 
-    const target =
-      inputs.find(i => i.name === "login_id") ||
-      inputs.find(i => i.name === "loginId") ||
-      inputs.find(i => i.name === "username") ||
-      inputs.find(i => i.id === "login_id") ||
-      inputs.find(i => i.id === "loginId") ||
-      inputs.find(i => i.type === "text") ||
-      inputs.find(i => i.type === "email");
+  // Navigate directly to the full URL
+  await page.goto(leaveUrl, { waitUntil: "networkidle2", timeout: 30000 });
+      await new Promise(r => setTimeout(r, 5000));
 
-    if (!target) return false;
-
-    target.focus();
-    target.value = username;
-    target.dispatchEvent(new Event("input", { bubbles: true }));
-    target.dispatchEvent(new Event("change", { bubbles: true }));
-
-    return true;
-  }, KOT_USERNAME);
-
-  if (!usernameTyped) {
-    throw new Error("Could not find username field");
-  }
-
-  const passwordTyped = await page.evaluate((password) => {
-    const target = document.querySelector('input[type="password"]');
-
-    if (!target) return false;
-
-    target.focus();
-    target.value = password;
-    target.dispatchEvent(new Event("input", { bubbles: true }));
-    target.dispatchEvent(new Event("change", { bubbles: true }));
-
-    return true;
-  }, KOT_PASSWORD);
-
-  if (!passwordTyped) {
-    throw new Error("Could not find password field");
-  }
-
-  const clicked = await page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll("button, input[type='submit'], input[type='button']"));
-
-    const target =
-      buttons.find(b => String(b.textContent || b.value || "").includes("ログイン")) ||
-      buttons.find(b => String(b.textContent || b.value || "").toLowerCase().includes("login")) ||
-      buttons.find(b => b.type === "submit");
-
-    if (!target) return false;
-
-    target.click();
-    return true;
-  });
-
-  if (!clicked) {
-    await page.keyboard.press("Enter");
-  }
-
-  await page.waitForNavigation({
-    waitUntil: "networkidle2",
-    timeout: 30000
-  }).catch(() => {});
-
-  await wait(3000);
-
-  console.log("After login URL:", page.url());
-
-  await page.goto(KOT_ADMIN_URL, {
-    waitUntil: "networkidle2",
-    timeout: 30000
-  });
-
-  await wait(3000);
-
-  console.log("Admin page loaded:", page.url());
-}
-// ─── Paid Leave Cache Control ─────────────────────────────────
-async function ensurePaidLeaveCache() {
-  const ageMs = paidLeaveCache.updatedAt
-    ? Date.now() - new Date(paidLeaveCache.updatedAt).getTime()
-    : Infinity;
-
-  const isStale = ageMs > PAID_LEAVE_MAX_AGE_MS;
-
-  if (isStale || !paidLeaveCache.leaveData) {
-    await scrapePaidLeave();
-  }
-
-  return paidLeaveCache;
+  const html = await page.content();
+      res.send(`<pre>${html.substring(0, 5000)}</pre>`);
+} catch (e) {
+      res.status(500).json({ error: e.message });
+} finally {
+      if (browser) await browser.close();
 }
 
-// ─── Paid Leave Data Endpoint ─────────────────────────────────
-app.get("/paid-leave-data", async (req, res) => {
-  try {
-    await ensurePaidLeaveCache();
-    res.json(paidLeaveCache);
-  } catch (err) {
-    res.status(500).json({
-      error: err.message,
-      cache: paidLeaveCache
-    });
-  }
 });
 
-// ─── Debug: raw paid leave cache map ──────────────────────────
-app.get("/debug-paid-leave-map", async (req, res) => {
-  try {
-    await ensurePaidLeaveCache();
+// ─── Helper: map headers + rows to array of objects ──────────function mapRowsToObjects(headers, rows) {return rows.map(row => {const obj = {};headers.forEach((header, i) => {if (header) obj[header] = row[i] !== undefined ? row[i] : null;});return obj;});}
 
-    const map = buildPaidLeaveMapFromCache();
+// ─── Helper: find value by multiple possible header names ─────function findCol(obj, candidates) {for (const key of candidates) {if (obj[key] !== undefined && obj[key] !== null) return obj[key];}return null;}
 
-    res.json({
-      updatedAt: paidLeaveCache.updatedAt,
-      error: paidLeaveCache.error,
-      count: Object.keys(map).length,
-      sample: Object.values(map).slice(0, 20)
-    });
+// ─── Helper: scrape table headers (handles multi-row headers) ─function buildHeaderSelector() {return `(() => {const tables = Array.from(document.querySelectorAll("table"));
 
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+  const targetKeywords = [
+    "社員コード",
+    "従業員コード",
+    "スタッフコード",
+    "氏名",
+    "名前",
+    "残日数",
+    "取得日数",
+    "使用日数",
+    "付与日数"
+  ];
 
-// ─── Debug Page ───────────────────────────────────────────────
-app.get("/debug-page", async (req, res) => {
-  let browser;
+  for (const table of tables) {
+    const text = table.textContent || "";
 
-  try {
-    browser = await launchBrowser();
+    const isTarget = targetKeywords.some(k => text.includes(k));
 
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
+    if (!isTarget) continue;
 
-    await loginToKOT(page);
+    const thead = table.querySelector("thead");
 
-    const leaveUrl = await findLinkByHrefPart(page, "day_count_list");
+    if (thead) {
+      const headerRows = Array.from(thead.querySelectorAll("tr"));
+      const lastRow = headerRows[headerRows.length - 1];
 
-    if (!leaveUrl) {
-      throw new Error("Could not find Leave management link");
+      return Array.from(lastRow.querySelectorAll("th, td"))
+        .map(h => h.textContent.trim());
     }
 
-    await page.goto(leaveUrl, {
-      waitUntil: "networkidle2",
-      timeout: 30000
-    });
+    const firstRow = table.querySelector("tr");
 
-    await wait(5000);
-
-    const html = await page.content();
-
-    res.send(`<pre>${escapeHtml(html.substring(0, 10000))}</pre>`);
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-
-  } finally {
-    if (browser) {
-      await browser.close();
+    if (firstRow) {
+      return Array.from(firstRow.querySelectorAll("th, td"))
+        .map(h => h.textContent.trim());
     }
   }
-});
 
-// ─── Paid Leave Scraper ───────────────────────────────────────
-async function scrapePaidLeave() {
-  console.log("Starting paid leave scrape...");
+  return [];
+})()
 
-  let browser;
+`;}
 
-  try {
-    browser = await launchBrowser();
+// ─── Paid Leave Scraper ───────────────────────────────────────let paidLeaveCache = {leaveData: null,entitlementData: null,updatedAt: null,error: null};
 
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
+async function scrapePaidLeave() {console.log("Starting paid leave scrape...");let browser;try {browser = await launchBrowser();const page = await browser.newPage();await page.setViewport({ width: 1280, height: 800 });
 
-    await loginToKOT(page);
+  // Login
+  await loginToKOT(page);
 
-    // ── Scrape Leave Management / day_count_list ──────────────
-    console.log("Navigating to Leave management...");
+  // ── Scrape Leave Management (day_count_list) ──
+  console.log("Navigating to Leave management...");
+      // Get the full URL from the link (includes session token)
+  const leaveUrl = await page.$eval(
+          'a[href*="day_count_list"]',
+          a => a.href
+        );
+      if (!leaveUrl) throw new Error("Could not find Leave management link");
+      console.log("Leave URL:", leaveUrl);
 
-    const leaveUrl = await findLinkByHrefPart(page, "day_count_list");
+  // Navigate directly to the full URL
+  await page.goto(leaveUrl, { waitUntil: "networkidle2", timeout: 30000 });
+      await new Promise(r => setTimeout(r, 5000));
+      console.log("Leave page URL:", page.url());
 
-    if (!leaveUrl) {
-      throw new Error("Could not find Leave management link");
-    }
+  await page.waitForSelector("table", { timeout: 30000 });
 
-    console.log("Leave URL:", leaveUrl);
+  const leaveHeaders = await page.evaluate(buildHeaderSelector());
+      console.log("Leave headers:", leaveHeaders);
 
-    await page.goto(leaveUrl, {
-      waitUntil: "networkidle2",
-      timeout: 30000
-    });
+  const leaveRows = await page.evaluate(() => {
 
-    await wait(5000);
+const leaveRows = await page.evaluate(() => {const tables = Array.from(document.querySelectorAll("table"));
 
-    await tryClickSearchButton(page);
-    await wait(3000);
+const targetKeywords = ["社員コード","従業員コード","スタッフコード","氏名","名前","残日数","取得日数","使用日数","付与日数"];
 
-    const leaveExtracted = await extractTargetTableFromPage(page, {
-      requiredKeywords: [
-        "社員コード",
-        "従業員コード",
-        "スタッフコード",
-        "Employee code",
-        "Code"
-      ],
-      usefulKeywords: [
-        "氏名",
-        "名前",
-        "Name",
-        "残日数",
-        "有給残",
-        "有給残日数",
-        "取得日数",
-        "使用日数",
-        "付与日数",
-        "Remaining",
-        "Used",
-        "Granted"
-      ]
-    });
+const targetTable = tables.find(table => {const text = table.textContent || "";return targetKeywords.some(k => text.includes(k));});
 
-    console.log("Leave table index:", leaveExtracted.tableIndex);
-    console.log("Leave table score:", leaveExtracted.score);
-    console.log("Leave headers:", leaveExtracted.headers);
-    console.log("Leave rows scraped:", leaveExtracted.rows.length);
+if (!targetTable) return [];
 
-    const leaveStructured = leaveExtracted.objects.map(row => ({
-      raw: row,
-      employeeCode: findColLoose(row, [
-        "社員コード",
-        "従業員コード",
-        "スタッフコード",
-        "コード",
-        "Employee code",
-        "Code"
-      ]),
-      name: findColLoose(row, [
-        "氏名",
-        "名前",
-        "スタッフ名",
-        "従業員名",
-        "Name"
-      ]),
-      paidLeaveRemaining: findColLoose(row, [
-        "残日数",
-        "有給残日数",
-        "有給残",
-        "残り日数",
-        "残",
-        "Remaining",
-        "Remaining days"
-      ]),
-      paidLeaveGranted: findColLoose(row, [
-        "付与日数",
-        "付与数",
-        "当年付与",
-        "付与",
-        "Granted",
-        "Granted days"
-      ]),
-      paidLeaveUsed: findColLoose(row, [
-        "使用日数",
-        "取得日数",
-        "消化日数",
-        "使用",
-        "Used",
-        "Used days",
-        "Taken",
-        "Taken days"
-      ])
-    }));
+const trs = targetTable.querySelectorAll("tbody tr");
 
-    // ── Scrape Entitlement / assign_paid_holiday_list ─────────
-    console.log("Navigating to Entitlement for paid leave...");
+return Array.from(trs).map(tr => {const tds = tr.querySelectorAll("td");return Array.from(tds).map(td => td.textContent.trim());}).filter(r => r.length > 0);});
 
-    await page.goto(KOT_ADMIN_URL, {
-      waitUntil: "networkidle2",
-      timeout: 30000
-    });
+      console.log("Leave rows scraped:", leaveRows.length);
 
-    await wait(3000);
-
-    let entitleHeaders = [];
-    let entitleRows = [];
-    let entitleStructured = [];
-
-    const entitleUrl = await findLinkByHrefPart(page, "assign_paid_holiday_list");
-
-    if (entitleUrl) {
-      console.log("Entitlement URL:", entitleUrl);
-
-      await page.goto(entitleUrl, {
-        waitUntil: "networkidle2",
-        timeout: 30000
-      });
-
-      await wait(5000);
-
-      await tryClickSearchButton(page);
-      await wait(3000);
-
-      const entitlementExtracted = await extractTargetTableFromPage(page, {
-        requiredKeywords: [
-          "社員コード",
-          "従業員コード",
-          "スタッフコード",
-          "Employee code",
-          "Code"
-        ],
-        usefulKeywords: [
-          "氏名",
-          "名前",
-          "Name",
-          "付与日",
-          "付与年月日",
-          "付与日数",
-          "有効期限",
-          "失効日",
-          "Grant",
-          "Granted",
-          "Expiry"
-        ]
-      });
-
-      entitleHeaders = entitlementExtracted.headers;
-      entitleRows = entitlementExtracted.rows;
-
-      console.log("Entitlement table index:", entitlementExtracted.tableIndex);
-      console.log("Entitlement table score:", entitlementExtracted.score);
-      console.log("Entitlement headers:", entitleHeaders);
-      console.log("Entitlement rows scraped:", entitleRows.length);
-
-      entitleStructured = entitlementExtracted.objects.map(row => ({
-        raw: row,
-        employeeCode: findColLoose(row, [
-          "社員コード",
-          "従業員コード",
-          "スタッフコード",
-          "コード",
-          "Employee code",
-          "Code"
-        ]),
-        name: findColLoose(row, [
-          "氏名",
-          "名前",
-          "スタッフ名",
-          "従業員名",
-          "Name"
-        ]),
-        grantingDate: findColLoose(row, [
-          "付与日",
-          "付与年月日",
-          "有給付与日",
-          "付与日付",
-          "Grant Date",
-          "Grant date",
-          "Granted date"
-        ]),
-        grantedDays: findColLoose(row, [
-          "付与日数",
-          "付与数",
-          "Granted Days",
-          "Granted days",
-          "Granted"
-        ]),
-        expiryDate: findColLoose(row, [
-          "有効期限",
-          "期限",
-          "失効日",
-          "Expiry",
-          "Expiry date",
-          "Expiration"
-        ])
+  // Map to named objects and extract key fields
+  const leaveMapped = mapRowsToObjects(leaveHeaders, leaveRows);
+      const leaveStructured = leaveMapped.map(row => ({
+              raw: row,
+              employeeCode: findCol(row, ["社員コード", "従業員コード", "スタッフコード", "コード", "Code"]),
+              name: findCol(row, ["氏名", "名前", "スタッフ名", "従業員名", "Name"]),
+              paidLeaveRemaining: findCol(row, ["残日数", "有給残日数", "残り日数", "残", "有給残", "Remaining"]),
+              paidLeaveGranted: findCol(row, ["付与日数", "当年付与", "付与", "Granted"]),
+              paidLeaveUsed: findCol(row, ["使用日数", "取得日数", "消化日数", "使用", "Used"]),
       }));
 
-    } else {
-      console.log("Entitlement link not found");
-    }
+  // Go back to admin page
+  await page.goto(KOT_ADMIN_URL, { waitUntil: "networkidle2", timeout: 30000 });
+      await new Promise(r => setTimeout(r, 3000));
 
-    paidLeaveCache = {
-      leaveData: {
-        headers: leaveExtracted.headers,
-        rows: leaveExtracted.rows,
-        structured: leaveStructured,
-        tableIndex: leaveExtracted.tableIndex,
-        score: leaveExtracted.score,
-        rankedTables: leaveExtracted.ranked
-      },
-      entitlementData: {
-        headers: entitleHeaders,
-        rows: entitleRows,
-        structured: entitleStructured
-      },
-      updatedAt: new Date().toISOString(),
-      error: null
-    };
+  // ── Scrape Entitlement (assign_paid_holiday_list) ──
+  console.log("Navigating to Entitlement for Paid leave...");
+      let entitleHeaders = [];
+      let entitleRows = [];
+      let entitleStructured = [];
 
-    console.log("Paid leave scrape complete!");
-
-  } catch (err) {
-    console.error("Paid leave scrape failed:", err.message);
-
-    paidLeaveCache = {
-      ...paidLeaveCache,
-      updatedAt: paidLeaveCache.updatedAt,
-      error: err.message
-    };
-
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
-
-    console.log("Paid leave scrape finished");
-  }
-}
-
-// ─── Table Extraction Helpers ─────────────────────────────────
-async function extractTargetTableFromPage(page, options) {
-  const requiredKeywords = options.requiredKeywords || [];
-  const usefulKeywords = options.usefulKeywords || [];
-
-  return page.evaluate(({ requiredKeywords, usefulKeywords }) => {
-    function clean(v) {
-      return String(v || "").replace(/\s+/g, " ").trim();
-    }
-
-    function norm(v) {
-      return clean(v).toLowerCase();
-    }
-
-    function rowCells(tr) {
-      return Array.from(tr.querySelectorAll("th, td"))
-        .map(td => clean(td.textContent));
-    }
-
-    function buildHeaders(table) {
-      const theadRows = Array.from(table.querySelectorAll("thead tr"));
-
-      if (theadRows.length > 0) {
-        return rowCells(theadRows[theadRows.length - 1]);
-      }
-
-      const rows = Array.from(table.querySelectorAll("tr"));
-
-      if (rows.length > 0) {
-        return rowCells(rows[0]);
-      }
-
-      return [];
-    }
-
-    function buildRows(table) {
-      const tbodyRows = Array.from(table.querySelectorAll("tbody tr"));
-
-      const rows = tbodyRows.length > 0
-        ? tbodyRows
-        : Array.from(table.querySelectorAll("tr")).slice(1);
-
-      return rows
-        .map(rowCells)
-        .filter(r => r.some(c => c !== ""));
-    }
-
-    function isMenuTable(table) {
-      const text = clean(table.textContent);
-
-      return (
-        text.includes("Work data") &&
-        text.includes("Daily data") &&
-        text.includes("Monthly data") &&
-        text.includes("Schedule") &&
-        text.includes("Leave management") &&
-        text.includes("Search employees")
-      );
-    }
-
-    function hasEmployeeCodeLikeData(rows) {
-      return rows.some(row => {
-        return row.some(cell => {
-          const s = clean(cell);
-          return /^\d{2,5}$/.test(s);
-        });
-      });
-    }
-
-    function hasRequiredHeader(headers) {
-      const headerText = norm(headers.join(" "));
-
-      return (
-        headerText.includes(norm("社員コード")) ||
-        headerText.includes(norm("従業員コード")) ||
-        headerText.includes(norm("スタッフコード")) ||
-        headerText.includes(norm("Employee code")) ||
-        headerText.includes(norm("Code"))
-      );
-    }
-
-    function hasPaidLeaveHeader(headers) {
-      const headerText = norm(headers.join(" "));
-
-      return (
-        headerText.includes(norm("残日数")) ||
-        headerText.includes(norm("有給残")) ||
-        headerText.includes(norm("有給残日数")) ||
-        headerText.includes(norm("取得日数")) ||
-        headerText.includes(norm("使用日数")) ||
-        headerText.includes(norm("付与日数")) ||
-        headerText.includes(norm("Remaining")) ||
-        headerText.includes(norm("Used")) ||
-        headerText.includes(norm("Granted"))
-      );
-    }
-
-    function scoreTable(table) {
-      if (isMenuTable(table)) {
-        return -9999;
-      }
-
-      const headers = buildHeaders(table);
-      const rows = buildRows(table);
-      const text = clean(table.textContent);
-      const normalizedText = norm(text);
-
-      let score = 0;
-
-      requiredKeywords.forEach(k => {
-        if (normalizedText.includes(norm(k))) {
-          score += 10;
-        }
-      });
-
-      usefulKeywords.forEach(k => {
-        if (normalizedText.includes(norm(k))) {
-          score += 3;
-        }
-      });
-
-      if (hasRequiredHeader(headers)) {
-        score += 50;
-      }
-
-      if (hasPaidLeaveHeader(headers)) {
-        score += 50;
-      }
-
-      if (hasEmployeeCodeLikeData(rows)) {
-        score += 30;
-      }
-
-      if (rows.length <= 1) {
-        score -= 30;
-      }
-
-      return score;
-    }
-
-    const tables = Array.from(document.querySelectorAll("table"));
-
-    const ranked = tables
-      .map((table, index) => {
-        const headers = buildHeaders(table);
-        const rows = buildRows(table);
-
-        return {
-          index,
-          table,
-          headers,
-          rows,
-          score: scoreTable(table),
-          textSample: clean(table.textContent).slice(0, 800)
-        };
-      })
-      .sort((a, b) => b.score - a.score);
-
-    const best = ranked[0];
-
-    if (!best || best.score <= 0) {
-      return {
-        tableIndex: null,
-        score: best ? best.score : 0,
-        headers: [],
-        rows: [],
-        objects: [],
-        ranked: ranked.map(x => ({
-          index: x.index,
-          score: x.score,
-          headers: x.headers,
-          rowCount: x.rows.length,
-          textSample: x.textSample
-        }))
-      };
-    }
-
-    const objects = best.rows.map(row => {
-      const obj = {};
-
-      best.headers.forEach((h, i) => {
-        if (h) {
-          obj[h] = row[i] !== undefined ? row[i] : "";
-        }
-      });
-
-      return obj;
-    });
-
-    return {
-      tableIndex: best.index,
-      score: best.score,
-      headers: best.headers,
-      rows: best.rows,
-      objects,
-      ranked: ranked.map(x => ({
-        index: x.index,
-        score: x.score,
-        headers: x.headers,
-        rowCount: x.rows.length,
-        textSample: x.textSample
-      }))
-    };
-
-  }, {
-    requiredKeywords,
-    usefulKeywords
-  });
-}
-async function tryClickSearchButton(page) {
-  try {
-    const clicked = await page.evaluate(() => {
-      const candidates = Array.from(
-        document.querySelectorAll("button, input[type='submit'], input[type='button'], a")
-      );
-
-      const target = candidates.find(el => {
-        const text = (
-          el.textContent ||
-          el.value ||
-          el.getAttribute("aria-label") ||
-          ""
-        ).trim();
-
-        const lower = text.toLowerCase();
-
-        return (
-          text.includes("検索") ||
-          text.includes("表示") ||
-          lower.includes("search") ||
-          lower.includes("display")
+  const entitleUrl = await page.$eval(
+          'a[href*="assign_paid_holiday_list"]',
+          a => a.href
         );
-      });
 
-      if (target) {
-        target.click();
-        return true;
-      }
+  if (entitleUrl) {
+          await page.goto(entitleUrl, { waitUntil: "networkidle2", timeout: 30000 });
+          await new Promise(r => setTimeout(r, 5000));
+          console.log("Entitlement page URL:", page.url());
 
-      return false;
-    });
+        try {
+                  await page.waitForSelector("table", { timeout: 30000 });
+                  entitleHeaders = await page.evaluate(buildHeaderSelector());
+                  entitleRows = await page.evaluate(() => {
+                              const leaveRows = await page.evaluate(() => {
 
-    if (clicked) {
-      console.log("Clicked search/display button");
-      await wait(3000);
-    }
+const tables = Array.from(document.querySelectorAll("table"));
 
-  } catch (err) {
-    console.log("Search click skipped:", err.message);
-  }
-}
+const targetKeywords = ["社員コード","従業員コード","スタッフコード","氏名","名前","残日数","取得日数","使用日数","付与日数"];
 
-async function findLinkByHrefPart(page, hrefPart) {
-  try {
-    return await page.evaluate(part => {
-      const anchors = Array.from(document.querySelectorAll("a"));
+const targetTable = tables.find(table => {const text = table.textContent || "";return targetKeywords.some(k => text.includes(k));});
 
-      const target = anchors.find(a => {
-        const href = a.href || "";
-        return href.includes(part);
-      });
+if (!targetTable) return [];
 
-      return target ? target.href : null;
-    }, hrefPart);
+const trs = targetTable.querySelectorAll("tbody tr");
 
-  } catch (err) {
-    return null;
-  }
-}
+return Array.from(trs).map(tr => {const tds = tr.querySelectorAll("td");return Array.from(tds).map(td => td.textContent.trim());}).filter(r => r.length > 0);});console.log("Entitlement rows scraped:", entitleRows.length);
 
-// ─── Paid Leave Map Builder ───────────────────────────────────
-function buildPaidLeaveMapFromCache() {
-  const map = {};
-
-  const leaveRows =
-    paidLeaveCache &&
-    paidLeaveCache.leaveData &&
-    Array.isArray(paidLeaveCache.leaveData.structured)
-      ? paidLeaveCache.leaveData.structured
-      : [];
-
-  const entitlementRows =
-    paidLeaveCache &&
-    paidLeaveCache.entitlementData &&
-    Array.isArray(paidLeaveCache.entitlementData.structured)
-      ? paidLeaveCache.entitlementData.structured
-      : [];
-
-  const entitlementByCode = {};
-
-  entitlementRows.forEach(row => {
-    const code = normalizeEmployeeCode(row.employeeCode);
-
-    if (!code) return;
-
-    entitlementByCode[code] = row;
-  });
-
-  leaveRows.forEach(row => {
-    const code = normalizeEmployeeCode(row.employeeCode);
-
-    if (!code) return;
-
-    const entitlement = entitlementByCode[code] || {};
-
-    const remainingPaidLeave = parseJapaneseNumber(
-      row.paidLeaveRemaining ||
-      row.remainingPaidLeave ||
-      row.remainingDays
-    );
-
-    const grantedDays = parseJapaneseNumber(
-      entitlement.grantedDays ||
-      row.paidLeaveGranted ||
-      row.grantedDays
-    );
-
-    const usedDays = parseJapaneseNumber(
-      row.paidLeaveUsed ||
-      row.usedDays ||
-      row.takenDays
-    );
-
-    const grantDate = normalizeDateText(
-      entitlement.grantingDate ||
-      row.grantingDate ||
-      row.grantDate
-    );
-
-    const expiryDate = normalizeDateText(
-      entitlement.expiryDate ||
-      row.expiryDate
-    );
-
-    map[code] = {
-      employeeCode: code,
-      remainingPaidLeave,
-      grantedDays,
-      usedDays,
-      grantDate,
-      expiryDate,
-      hasRecord:
-        remainingPaidLeave !== null ||
-        grantedDays !== null ||
-        usedDays !== null ||
-        !!grantDate ||
-        !!expiryDate
-    };
-  });
-
-  return map;
-}
-
-// ─── Generic Helpers ──────────────────────────────────────────
-function findColLoose(obj, candidates) {
-  if (!obj || typeof obj !== "object") return "";
-
-  const keys = Object.keys(obj);
-
-  for (const candidate of candidates) {
-    const normalizedCandidate = normalizeLoose(candidate);
-
-    // Exact match first
-    for (const key of keys) {
-      if (normalizeLoose(key) === normalizedCandidate) {
-        const value = obj[key];
-
-        if (value !== undefined && value !== null && value !== "") {
-          return value;
+            // Map to named objects and extract key fields
+            const entitleMapped = mapRowsToObjects(entitleHeaders, entitleRows);
+                  entitleStructured = entitleMapped.map(row => ({
+                              raw: row,
+                              employeeCode: findCol(row, ["社員コード", "従業員コード", "スタッフコード", "コード", "Code"]),
+                              name: findCol(row, ["氏名", "名前", "スタッフ名", "従業員名", "Name"]),
+                              grantingDate: findCol(row, ["付与日", "付与年月日", "有給付与日", "Grant Date", "付与日付"]),
+                              grantedDays: findCol(row, ["付与日数", "付与数", "Granted Days"]),
+                              expiryDate: findCol(row, ["有効期限", "期限", "失効日", "Expiry"]),
+                  }));
+        } catch(e) {
+                  console.log("No table on entitlement page:", e.message);
         }
-      }
-    }
-
-    // Partial match second
-    for (const key of keys) {
-      if (normalizeLoose(key).includes(normalizedCandidate)) {
-        const value = obj[key];
-
-        if (value !== undefined && value !== null && value !== "") {
-          return value;
-        }
-      }
-    }
+  } else {
+          console.log("Entitlement link not found");
   }
 
-  return "";
+  paidLeaveCache = {
+          leaveData: {
+                    headers: leaveHeaders,
+                    rows: leaveRows,
+                    structured: leaveStructured,
+          },
+          entitlementData: {
+                    headers: entitleHeaders,
+                    rows: entitleRows,
+                    structured: entitleStructured,
+          },
+          updatedAt: new Date().toISOString(),
+          error: null
+  };
+
+  console.log("Scrape complete!");
+
+} catch(e) {
+      console.error("Scrape failed:", e.message);
+      paidLeaveCache.error = e.message;
+} finally {
+      if (browser) await browser.close();
+      console.log("Scrape finished");
 }
 
-function normalizeLoose(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/[（）()]/g, "");
 }
 
-function normalizeEmployeeCode(value) {
-  const s = String(value || "").trim();
+// 7:00 AM JST = 22:00 UTC | 4:00 PM JST = 07:00 UTCcron.schedule("0 22 * * *", () => scrapePaidLeave());cron.schedule("0 7 * * *",  () => scrapePaidLeave());
 
-  if (!s) return "";
+app.get("/paid-leave-data", async (req, res) => {const ageMs = paidLeaveCache.updatedAt? Date.now() - new Date(paidLeaveCache.updatedAt).getTime(): Infinity;const isStale = ageMs > 13 * 60 * 60 * 1000;
 
-  const noLeadingZeros = s.replace(/^0+/, "");
+      if (isStale) {
+            await scrapePaidLeave();
+      }
+res.json(paidLeaveCache);
 
-  return noLeadingZeros || "0";
-}
-
-function parseJapaneseNumber(value) {
-  if (value === null || value === undefined || value === "") return null;
-
-  const s = String(value)
-    .replace(/日/g, "")
-    .replace(/,/g, "")
-    .trim();
-
-  const n = Number(s);
-
-  return isNaN(n) ? null : n;
-}
-
-function normalizeDateText(value) {
-  if (!value) return "";
-
-  const s = String(value).trim();
-
-  const normalized = s
-    .replace(/\./g, "-")
-    .replace(/\//g, "-")
-    .replace(/年/g, "-")
-    .replace(/月/g, "-")
-    .replace(/日/g, "");
-
-  const m = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-
-  if (!m) return "";
-
-  const y = m[1];
-  const mo = String(m[2]).padStart(2, "0");
-  const d = String(m[3]).padStart(2, "0");
-
-  return `${y}-${mo}-${d}`;
-}
-
-function escapeHtml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// ─── Scheduled Scrapes ────────────────────────────────────────
-// 7:00 AM JST = 22:00 UTC
-// 4:00 PM JST = 07:00 UTC
-cron.schedule("0 22 * * *", () => scrapePaidLeave());
-cron.schedule("0 7 * * *", () => scrapePaidLeave());
-
-// ─── Start Server ─────────────────────────────────────────────
-app.listen(process.env.PORT || 3000, () => {
-  console.log("KOT relay running");
 });
+
+// ── Start Server ──────────────────────────────────────────────app.listen(process.env.PORT || 3000, () => console.log("KOT relay running"));
