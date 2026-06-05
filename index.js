@@ -630,7 +630,63 @@ async function extractTargetTableFromPage(page, options) {
         .filter(r => r.some(c => c !== ""));
     }
 
+    function isMenuTable(table) {
+      const text = clean(table.textContent);
+
+      return (
+        text.includes("Work data") &&
+        text.includes("Daily data") &&
+        text.includes("Monthly data") &&
+        text.includes("Schedule") &&
+        text.includes("Leave management") &&
+        text.includes("Search employees")
+      );
+    }
+
+    function hasEmployeeCodeLikeData(rows) {
+      return rows.some(row => {
+        return row.some(cell => {
+          const s = clean(cell);
+          return /^\d{2,5}$/.test(s);
+        });
+      });
+    }
+
+    function hasRequiredHeader(headers) {
+      const headerText = norm(headers.join(" "));
+
+      return (
+        headerText.includes(norm("社員コード")) ||
+        headerText.includes(norm("従業員コード")) ||
+        headerText.includes(norm("スタッフコード")) ||
+        headerText.includes(norm("Employee code")) ||
+        headerText.includes(norm("Code"))
+      );
+    }
+
+    function hasPaidLeaveHeader(headers) {
+      const headerText = norm(headers.join(" "));
+
+      return (
+        headerText.includes(norm("残日数")) ||
+        headerText.includes(norm("有給残")) ||
+        headerText.includes(norm("有給残日数")) ||
+        headerText.includes(norm("取得日数")) ||
+        headerText.includes(norm("使用日数")) ||
+        headerText.includes(norm("付与日数")) ||
+        headerText.includes(norm("Remaining")) ||
+        headerText.includes(norm("Used")) ||
+        headerText.includes(norm("Granted"))
+      );
+    }
+
     function scoreTable(table) {
+      if (isMenuTable(table)) {
+        return -9999;
+      }
+
+      const headers = buildHeaders(table);
+      const rows = buildRows(table);
       const text = clean(table.textContent);
       const normalizedText = norm(text);
 
@@ -648,13 +704,20 @@ async function extractTargetTableFromPage(page, options) {
         }
       });
 
-      // Penalize known menu/navigation tables
-      if (
-        normalizedText.includes("work data daily data monthly data") ||
-        normalizedText.includes("schedule schedule management") ||
-        normalizedText.includes("confirm attendance data error")
-      ) {
-        score -= 100;
+      if (hasRequiredHeader(headers)) {
+        score += 50;
+      }
+
+      if (hasPaidLeaveHeader(headers)) {
+        score += 50;
+      }
+
+      if (hasEmployeeCodeLikeData(rows)) {
+        score += 30;
+      }
+
+      if (rows.length <= 1) {
+        score -= 30;
       }
 
       return score;
@@ -663,12 +726,19 @@ async function extractTargetTableFromPage(page, options) {
     const tables = Array.from(document.querySelectorAll("table"));
 
     const ranked = tables
-      .map((table, index) => ({
-        index,
-        table,
-        score: scoreTable(table),
-        textSample: clean(table.textContent).slice(0, 600)
-      }))
+      .map((table, index) => {
+        const headers = buildHeaders(table);
+        const rows = buildRows(table);
+
+        return {
+          index,
+          table,
+          headers,
+          rows,
+          score: scoreTable(table),
+          textSample: clean(table.textContent).slice(0, 800)
+        };
+      })
       .sort((a, b) => b.score - a.score);
 
     const best = ranked[0];
@@ -676,25 +746,24 @@ async function extractTargetTableFromPage(page, options) {
     if (!best || best.score <= 0) {
       return {
         tableIndex: null,
-        score: 0,
+        score: best ? best.score : 0,
         headers: [],
         rows: [],
         objects: [],
         ranked: ranked.map(x => ({
           index: x.index,
           score: x.score,
+          headers: x.headers,
+          rowCount: x.rows.length,
           textSample: x.textSample
         }))
       };
     }
 
-    const headers = buildHeaders(best.table);
-    const rows = buildRows(best.table);
-
-    const objects = rows.map(row => {
+    const objects = best.rows.map(row => {
       const obj = {};
 
-      headers.forEach((h, i) => {
+      best.headers.forEach((h, i) => {
         if (h) {
           obj[h] = row[i] !== undefined ? row[i] : "";
         }
@@ -706,12 +775,14 @@ async function extractTargetTableFromPage(page, options) {
     return {
       tableIndex: best.index,
       score: best.score,
-      headers,
-      rows,
+      headers: best.headers,
+      rows: best.rows,
       objects,
       ranked: ranked.map(x => ({
         index: x.index,
         score: x.score,
+        headers: x.headers,
+        rowCount: x.rows.length,
         textSample: x.textSample
       }))
     };
@@ -721,7 +792,6 @@ async function extractTargetTableFromPage(page, options) {
     usefulKeywords
   });
 }
-
 async function tryClickSearchButton(page) {
   try {
     const clicked = await page.evaluate(() => {
