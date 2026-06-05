@@ -139,47 +139,99 @@ async function loginToKOT(page) {
   }
 
   await page.goto(KOT_LOGIN_URL, {
-    waitUntil: "networkidle2",
+    waitUntil: "domcontentloaded",
     timeout: 30000
   });
 
-  const userSelectors = [
-    'input[name="login_id"]',
-    'input[name="loginId"]',
-    'input[name="username"]',
-    'input[type="text"]'
-  ];
+  await wait(3000);
 
-  let typed = false;
+  console.log("Login page URL:", page.url());
 
-  for (const sel of userSelectors) {
-    try {
-      await page.waitForSelector(sel, { timeout: 2500 });
-      await page.click(sel, { clickCount: 3 });
-      await page.type(sel, KOT_USERNAME);
-      typed = true;
-      console.log("Username typed using:", sel);
-      break;
-    } catch (e) {}
-  }
+  const loginDebug = await page.evaluate(() => {
+    return {
+      title: document.title,
+      url: location.href,
+      inputs: Array.from(document.querySelectorAll("input")).map(input => ({
+        type: input.type,
+        name: input.name,
+        id: input.id,
+        placeholder: input.placeholder,
+        autocomplete: input.autocomplete
+      }))
+    };
+  });
 
-  if (!typed) {
+  console.log("Login page inputs:", JSON.stringify(loginDebug, null, 2));
+
+  const usernameTyped = await page.evaluate((username) => {
+    const inputs = Array.from(document.querySelectorAll("input"));
+
+    const target =
+      inputs.find(i => i.name === "login_id") ||
+      inputs.find(i => i.name === "loginId") ||
+      inputs.find(i => i.name === "username") ||
+      inputs.find(i => i.id === "login_id") ||
+      inputs.find(i => i.id === "loginId") ||
+      inputs.find(i => i.type === "text") ||
+      inputs.find(i => i.type === "email");
+
+    if (!target) return false;
+
+    target.focus();
+    target.value = username;
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    target.dispatchEvent(new Event("change", { bubbles: true }));
+
+    return true;
+  }, KOT_USERNAME);
+
+  if (!usernameTyped) {
     throw new Error("Could not find username field");
   }
 
-  await page.waitForSelector('input[type="password"]', { timeout: 5000 });
-  await page.click('input[type="password"]', { clickCount: 3 });
-  await page.type('input[type="password"]', KOT_PASSWORD);
+  const passwordTyped = await page.evaluate((password) => {
+    const target = document.querySelector('input[type="password"]');
 
-  await Promise.all([
-    page.waitForNavigation({
-      waitUntil: "networkidle2",
-      timeout: 30000
-    }),
-    page.keyboard.press("Enter")
-  ]);
+    if (!target) return false;
 
-  console.log("Logged in. URL:", page.url());
+    target.focus();
+    target.value = password;
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    target.dispatchEvent(new Event("change", { bubbles: true }));
+
+    return true;
+  }, KOT_PASSWORD);
+
+  if (!passwordTyped) {
+    throw new Error("Could not find password field");
+  }
+
+  const clicked = await page.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll("button, input[type='submit'], input[type='button']"));
+
+    const target =
+      buttons.find(b => String(b.textContent || b.value || "").includes("ログイン")) ||
+      buttons.find(b => String(b.textContent || b.value || "").toLowerCase().includes("login")) ||
+      buttons.find(b => b.type === "submit");
+
+    if (!target) return false;
+
+    target.click();
+    return true;
+  });
+
+  if (!clicked) {
+    await page.keyboard.press("Enter");
+  }
+
+  await page.waitForNavigation({
+    waitUntil: "networkidle2",
+    timeout: 30000
+  }).catch(() => {});
+
+  await wait(3000);
+
+  console.log("After login URL:", page.url());
 
   await page.goto(KOT_ADMIN_URL, {
     waitUntil: "networkidle2",
@@ -187,9 +239,9 @@ async function loginToKOT(page) {
   });
 
   await wait(3000);
-  console.log("Admin page loaded");
-}
 
+  console.log("Admin page loaded:", page.url());
+}
 // ─── Paid Leave Cache Control ─────────────────────────────────
 async function ensurePaidLeaveCache() {
   const ageMs = paidLeaveCache.updatedAt
